@@ -58,8 +58,7 @@ class Z1Task(RLTask):
         
         self.dt = 1/120.
 
-        self._num_observations = 24
-        
+        self._num_observations = 31
         self._num_actions = 7
         
         self._gripper_too_low_height = 0.11
@@ -134,8 +133,8 @@ class Z1Task(RLTask):
         self.z1_dof_pos = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
         self.z1_dof_vel = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
 
-        self.torques = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
-        self.previous_torques = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
+        self.current_actions = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
+        self.prev_actions = torch.zeros((self.num_envs, self._num_actions), dtype=torch.float, device=self.device, requires_grad=False)
 
         # self.z1_default_dof_pos = torch.tensor([0.0, 1.5, -1.5, 0.0, 0.0, 0.0, -0.8], dtype=torch.float, device=self.device, requires_grad=False)
         self.z1_default_dof_pos = torch.tensor([0.0, 1.0, -1.4, 0.0, 0.0, 0.0, -0.0], dtype=torch.float, device=self.device, requires_grad=False)
@@ -172,7 +171,9 @@ class Z1Task(RLTask):
         
         
         self.obs_buf = torch.cat(
-            (                
+            (              
+                self.current_actions, # 7
+                
                 dof_pos_scaled, # 7
                 z1_dof_vel_scaled, # 7
                 
@@ -201,6 +202,10 @@ class Z1Task(RLTask):
         if not self._env._world.is_playing():
             return
         
+        # print("[INPUT ACTIONS] : ", actions[0])
+        # # keep previous actions
+        # self.previous_actions = self.actions
+        
         # Reset is occured here
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_env_ids) > 0:
@@ -215,14 +220,16 @@ class Z1Task(RLTask):
         # print(self.Kp)
         self.Kd = torch.tensor([0.05] * 7, device='cuda:0')
         
-        self.actions = actions.clone().to(self.device)
-        targets = self.z1_dof_targets + self.actions
+        self.prev_actions = self.current_actions
+        self.current_actions = actions.clone().to(self.device)
+        
+        targets = self.z1_dof_targets + self.current_actions
         self.z1_dof_targets[:] = tensor_clamp(targets, self.z1_dof_lower_limits, self.z1_dof_upper_limits)
         
         # print("lower limit : ", self.z1_dof_lower_limits[6])
         # print("upper limit : ", self.z1_dof_upper_limits[6])
         # print("current pos : ", self.z1_dof_pos[0][6])
-        # print("current target : ", self.z1_dof_targets[0][6])        
+        # print("current target : ", self.z1_dof_targets[0][6])
         # print("KP : ", self.Kp)
         
         for i in range(2):
@@ -231,9 +238,9 @@ class Z1Task(RLTask):
                 # self.previous_torques = self.torques
                 
                 torques = self.Kp*(self.z1_dof_targets - self.z1_dof_pos) - self.Kd*self.z1_dof_vel
-                self.control = tensor_clamp(torques, -self.max_force, self.max_force)
+                self.controls = tensor_clamp(torques, -self.max_force, self.max_force)
                 # self.control[:, 6] =  -90.0
-                self._z1s.set_joint_efforts(self.control)
+                self._z1s.set_joint_efforts(self.controls)
                 # print("[control] : ", self.control[0][6])
                 
                 SimulationContext.step(self._env._world, render=False)
@@ -349,7 +356,10 @@ class Z1Task(RLTask):
                                      torch.ones_like(self.reset_buf), self.reset_buf)
     
     def compute_z1_reward(self):
-        
+        # print("[curr] : ", self.current_actions[0])
+        # print("[prev] : ", self.prev_actions[0])
+        # print("[DIFF] ==== ", self.current_actions[0] - self.prev_actions[0])
+                
         gripper_mover_pos, gripper_mover_rot = self._z1s._gripperMover.get_world_poses(clone=False)
         gripper_mover_pos = gripper_mover_pos - self._env_pos
         
@@ -361,8 +371,18 @@ class Z1Task(RLTask):
         
         rewards = 1.0 / (0.01 + gripper_ball_distance)
         
+        # jitter penalize
+        jitter_penal_scale = 1.0
+        action_diff = self.current_actions - self.prev_actions
+        # abs_action_diff = abs(action_diff)
+        sum_abs_action_diff = torch.sum(abs(action_diff), dim=1)
+        
+        # print(sum_abs_action_diff)
+        rewards = rewards - jitter_penal_scale * sum_abs_action_diff
+        
         gripper_too_low_condition = (gripper_mover_pos[:, 2] < self._gripper_too_low_height).unsqueeze(0)
-        rewards = torch.where(gripper_too_low_condition, torch.ones_like(rewards) * -10.0, rewards)     
+        rewards = torch.where(gripper_too_low_condition, torch.ones_like(rewards) * -10.0, rewards)
+         
         
         # print("[Pos] : ", gripper_mover_pos)
         # print("[Rewards] : ", rewards)
