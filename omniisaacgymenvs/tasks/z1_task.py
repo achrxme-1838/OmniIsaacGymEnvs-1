@@ -62,26 +62,14 @@ class Z1Task(RLTask):
         self._num_actions = 7
         
         self._gripper_too_low_height = 0.11
-        # self._forearm_too_low_height = 0.085
-        # self._wrist_too_low_height = 0.020
-        
         RLTask.__init__(self, name, env)
         
-        # self._z1_rand_scale = 0.2
-        self._z1_rand_scale = 0.0
-        
-        self._ball_rand_scale = 0.1
-
-        # self._ball_base_position = torch.tensor([0.0, 0.6, 0.4]).to(self._device)
+        self._z1_rand_scale = 0.3
         self._ball_base_position = torch.tensor([0.0, 0.0, 0.5]).to(self._device)
-        # self._ball_base_position = torch.tensor([0.0, 0.3, 0.4]).to(self._device)
-        
         
         self._ball_radius = 0.02
-        # self._ball_radius = 0.05
         
         # self.Kp = torch.tensor([11.4592, 40.4441, 20.8348, 19.7572, 22.3230, 10.7430, 38.1972], device='cuda:0')
-
         return
 
     def set_up_scene(self, scene) -> None:
@@ -138,9 +126,6 @@ class Z1Task(RLTask):
 
         # self.z1_default_dof_pos = torch.tensor([0.0, 1.5, -1.5, 0.0, 0.0, 0.0, -0.8], dtype=torch.float, device=self.device, requires_grad=False)
         self.z1_default_dof_pos = torch.tensor([0.0, 1.0, -1.4, 0.0, 0.0, 0.0, -0.0], dtype=torch.float, device=self.device, requires_grad=False)
-        
-        # self.z1_default_dof_pos = torch.zeros(self._num_actions, dtype=torch.float, device=self.device, requires_grad=False)
-        # print(self.z1_default_dof_pos)
 
 
     def get_observations(self) -> dict:
@@ -201,11 +186,7 @@ class Z1Task(RLTask):
         
         if not self._env._world.is_playing():
             return
-        
-        # print("[INPUT ACTIONS] : ", actions[0])
-        # # keep previous actions
-        # self.previous_actions = self.actions
-        
+
         # Reset is occured here
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_env_ids) > 0:
@@ -217,7 +198,6 @@ class Z1Task(RLTask):
         self.Kp = self.max_force * 2.0 / self.dof_range
         self.Kp_scale = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], device='cuda:0') # downsize the gripper gain
         self.Kp = self.Kp * self.Kp_scale
-        # print(self.Kp)
         self.Kd = torch.tensor([0.05] * 7, device='cuda:0')
         
         self.prev_actions = self.current_actions
@@ -226,22 +206,11 @@ class Z1Task(RLTask):
         targets = self.z1_dof_targets + self.current_actions
         self.z1_dof_targets[:] = tensor_clamp(targets, self.z1_dof_lower_limits, self.z1_dof_upper_limits)
         
-        # print("lower limit : ", self.z1_dof_lower_limits[6])
-        # print("upper limit : ", self.z1_dof_upper_limits[6])
-        # print("current pos : ", self.z1_dof_pos[0][6])
-        # print("current target : ", self.z1_dof_targets[0][6])
-        # print("KP : ", self.Kp)
-        
         for i in range(2):
-            if self._env._world.is_playing():
-                
-                # self.previous_torques = self.torques
-                
+            if self._env._world.is_playing():       
                 torques = self.Kp*(self.z1_dof_targets - self.z1_dof_pos) - self.Kd*self.z1_dof_vel
                 self.controls = tensor_clamp(torques, -self.max_force, self.max_force)
-                # self.control[:, 6] =  -90.0
                 self._z1s.set_joint_efforts(self.controls)
-                # print("[control] : ", self.control[0][6])
                 
                 SimulationContext.step(self._env._world, render=False)
                 self.refresh_dof_state_tensors()
@@ -250,6 +219,18 @@ class Z1Task(RLTask):
         # ball_positions = self._balls.get_world_poses(clone=False)[0].to(self._device)
         # self._balls.set_world_poses(positions=ball_positions + torch.tensor([0.0005, 0.0, 0.0]).to(self._device))
         # self._balls.set_world_poses(positions=ball_positions + torch.tensor([0.001, 0.0, 0.0]).to(self._device))
+        
+    def generate_random_points(self, n_points):
+        outer_box_size = 0.8
+        inner_box_size = 0.2
+        
+        points = []
+        while len(points) < n_points:
+            point = outer_box_size * (torch.rand(2, device=self._device) - 0.5)
+            if torch.abs(point[0]) > inner_box_size or torch.abs(point[1]) > inner_box_size:
+                points.append(point)
+
+        return torch.stack(points)
 
 
     def reset_idx(self, env_ids):
@@ -276,36 +257,16 @@ class Z1Task(RLTask):
         self._z1s.set_joint_velocities(dof_vel, indices=indices)
         
         # RESET Ball
-        # new_ball_pos = self.initial_ball_pos[env_ids] + (self._ball_rand_scale * torch.rand((len(env_ids), 3), device=self._device)
-                                                        #  - self._ball_rand_scale * 0.5)
+        height_range = 0.4
+        
         new_ball_pos = self.initial_ball_pos[env_ids]
-        
-        lower_bound1, upper_bound1 = -0.4, -0.2
-        lower_bound2, upper_bound2 = 0.2, 0.4
-        
-        range1 = upper_bound1 - lower_bound1
-        range2 = upper_bound2 - lower_bound2
+        random_positions = self.generate_random_points(num_indices)
 
-        random_x = torch.rand(len(env_ids), device=self._device)
-        random_y = torch.rand(len(env_ids), device=self._device)
-        random_z = torch.rand(len(env_ids), device=self._device)
-        
-        mapped_random_x = torch.where(
-            random_x < 0.5,
-            random_x * 2 * range1 + lower_bound1,
-            (random_x - 0.5) * 2 * range2 + lower_bound2
-        )
-        
-        mapped_random_y = torch.where(
-            random_y < 0.5,
-            random_y * 2 * range1 + lower_bound1,
-            (random_y - 0.5) * 2 * range2 + lower_bound2
-        )
-        
-        
-        new_ball_pos[:, 0] = new_ball_pos[:, 0] + mapped_random_x
-        new_ball_pos[:, 1] = new_ball_pos[:, 1] + mapped_random_y
-        new_ball_pos[:, 2] = new_ball_pos[:, 2] + 0.4 * random_z - 0.2
+        new_ball_pos[:, 0] += random_positions[:, 0]
+        new_ball_pos[:, 1] += random_positions[:, 1]
+
+        random_z = torch.rand(num_indices, device=self._device)
+        new_ball_pos[:, 2] += height_range * random_z - 0.5 * height_range
         
         ball_pos = torch.zeros((num_indices, 3), device=self._device)
         ball_pos[:, :] = new_ball_pos
