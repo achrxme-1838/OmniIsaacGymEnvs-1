@@ -67,7 +67,9 @@ class Z1Task(RLTask):
         self._z1_rand_scale = 0.3
         self._ball_base_position = torch.tensor([0.0, 0.0, 0.5]).to(self._device)
         
-        self._ball_radius = 0.02
+        # self._ball_radius = 0.02
+        self._ball_radius = 0.01
+        self._finger_vector = torch.tensor([0.09, 0.0, -0.02], device='cuda:0')
         
         # self.Kp = torch.tensor([11.4592, 40.4441, 20.8348, 19.7572, 22.3230, 10.7430, 38.1972], device='cuda:0')
         return
@@ -126,6 +128,11 @@ class Z1Task(RLTask):
 
         # self.z1_default_dof_pos = torch.tensor([0.0, 1.5, -1.5, 0.0, 0.0, 0.0, -0.8], dtype=torch.float, device=self.device, requires_grad=False)
         self.z1_default_dof_pos = torch.tensor([0.0, 1.0, -1.4, 0.0, 0.0, 0.0, -0.0], dtype=torch.float, device=self.device, requires_grad=False)
+        
+        self.gripper_mover_pos = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device, requires_grad=False)
+        self.gripper_mover_rot = torch.ones((self.num_envs, 4), dtype=torch.float, device=self.device, requires_grad=False)
+        self.pinch_pos = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device, requires_grad=False)
+        
 
 
     def get_observations(self) -> dict:
@@ -151,9 +158,13 @@ class Z1Task(RLTask):
         
         gripper_mover_pos, gripper_mover_rot = self._z1s._gripperMover.get_world_poses(clone=False)
         gripper_mover_pos = gripper_mover_pos - self._env_pos
-        gripper_mover_pos_tensor = torch.tensor(gripper_mover_pos, dtype=torch.float32)
-        gripper_mover_rot_tensor = torch.tensor(gripper_mover_rot, dtype=torch.float32)
+        self.gripper_mover_pos = torch.tensor(gripper_mover_pos, dtype=torch.float32)
+        self.gripper_mover_rot = torch.tensor(gripper_mover_rot, dtype=torch.float32)
         
+        gripper_mover_rot_mat = quats_to_rot_matrices(self.gripper_mover_rot)
+        finger_offset = torch.matmul(gripper_mover_rot_mat, self._finger_vector)
+        
+        self.pinch_pos = self.gripper_mover_pos[:, :] + finger_offset
         
         self.obs_buf = torch.cat(
             (              
@@ -162,8 +173,9 @@ class Z1Task(RLTask):
                 dof_pos_scaled, # 7
                 z1_dof_vel_scaled, # 7
                 
-                gripper_mover_pos_tensor, # 3
-                gripper_mover_rot_tensor, # 4
+                # self.gripper_mover_pos, # 3
+                self.pinch_pos,  # 3
+                self.gripper_mover_rot, # 4
                 
                 ball_pos_tensor, # 3
             ),
@@ -215,10 +227,14 @@ class Z1Task(RLTask):
                 SimulationContext.step(self._env._world, render=False)
                 self.refresh_dof_state_tensors()
         
-        # to make the ball move               
-        # ball_positions = self._balls.get_world_poses(clone=False)[0].to(self._device)
-        # self._balls.set_world_poses(positions=ball_positions + torch.tensor([0.0005, 0.0, 0.0]).to(self._device))
-        # self._balls.set_world_poses(positions=ball_positions + torch.tensor([0.001, 0.0, 0.0]).to(self._device))
+        # to make the ball to gripper        
+        # ball_positions, _ = self._balls.get_world_poses(clone=False)
+        
+        # gripper_mover_rot_mat = quats_to_rot_matrices(self.gripper_mover_rot)
+        # finger_offset = torch.matmul(gripper_mover_rot_mat, self._finger_vector)
+        
+        # ball_positions[:, :] = self.gripper_mover_pos[:, :] + self._env_pos + finger_offset
+        # self._balls.set_world_poses(positions=ball_positions)
         
     def generate_random_points(self, n_points):
         outer_box_size = 0.8
@@ -317,20 +333,16 @@ class Z1Task(RLTask):
                                      torch.ones_like(self.reset_buf), self.reset_buf)
     
     def compute_z1_reward(self):
-        # print("[curr] : ", self.current_actions[0])
-        # print("[prev] : ", self.prev_actions[0])
-        # print("[DIFF] ==== ", self.current_actions[0] - self.prev_actions[0])
-                
-        gripper_mover_pos, gripper_mover_rot = self._z1s._gripperMover.get_world_poses(clone=False)
-        gripper_mover_pos = gripper_mover_pos - self._env_pos
-        
+
         ball_positions = self._balls.get_world_poses(clone=False)[0].to(self._device)
         ball_positions = ball_positions - self._env_pos
         
-        gripper_ball_distance = torch.sqrt(torch.sum((gripper_mover_pos - ball_positions) ** 2, dim=1))
-        # print(gripper_ball_distance[0])
+        # gripper_ball_distance = torch.sqrt(torch.sum((self.gripper_mover_pos - ball_positions) ** 2, dim=1))
+        pinch_ball_distance = torch.sqrt(torch.sum((self.pinch_pos - ball_positions) ** 2, dim=1))
+    
+        # print(pinch_ball_distance)
         
-        rewards = 1.0 / (0.01 + gripper_ball_distance)
+        rewards = 1.0 / (0.01 + pinch_ball_distance)
         
         # jitter penalize
         jitter_penal_scale = 1.0
@@ -341,7 +353,7 @@ class Z1Task(RLTask):
         # print(sum_abs_action_diff)
         rewards = rewards - jitter_penal_scale * sum_abs_action_diff
         
-        gripper_too_low_condition = (gripper_mover_pos[:, 2] < self._gripper_too_low_height).unsqueeze(0)
+        gripper_too_low_condition = (self.gripper_mover_pos[:, 2] < self._gripper_too_low_height).unsqueeze(0)
         rewards = torch.where(gripper_too_low_condition, torch.ones_like(rewards) * -10.0, rewards)
          
         

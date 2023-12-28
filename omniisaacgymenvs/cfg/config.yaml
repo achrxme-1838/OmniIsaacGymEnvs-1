@@ -36,7 +36,9 @@ solver_type: 1 # 0: pgs, 1: tgs
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
+# checkpoint: '/home/seonghyeon/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/Z1Task/nn/Z1Task.pth'
 checkpoint: ''
+
 # evaluate checkpoint
 evaluation: False
 
