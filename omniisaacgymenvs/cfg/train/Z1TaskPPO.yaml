@@ -55,7 +55,7 @@ params:
     kl_threshold: 0.008
     score_to_win: 100000000
     
-    max_epochs: ${resolve_default:10000,${....max_iterations}}
+    max_epochs: ${resolve_default:100000,${....max_iterations}}
     
     save_best_after: 2
     save_frequency: 100
@@ -67,6 +67,7 @@ params:
     horizon_length: 16
 
     minibatch_size: 8192
+    # minibatch_size: 4096
     # minibatch_size: 32
     # minibatch_size: 2
     

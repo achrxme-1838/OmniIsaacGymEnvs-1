@@ -36,14 +36,20 @@ solver_type: 1 # 0: pgs, 1: tgs
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-# checkpoint: '/home/seonghyeon/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/Z1Task/nn/Z1Task.pth'
 checkpoint: ''
+# checkpoint: '/home/seonghyeon/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/Z1Task/nn/Z1Task.pth'
+# checkpoint: '/home/seonghyeon/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/Z1Task/nn/last_Z1Task_ep_9600_rew_3594.1218.pth'
 
 # evaluate checkpoint
 evaluation: False
 
+
 # disables rendering
-headless: False
+headless: True
+# headless: False
+
+
+
 # enables native livestream
 enable_livestream: False
 # timeout for MT script
